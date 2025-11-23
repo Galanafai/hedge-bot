@@ -39,10 +39,9 @@ class HedgeTool(BaseTool):
 
         print(f"🤖 AGENT WAKING UP: Initiating Hedge for ${amount_usd}...")
 
-        # Rule: 1 USD = 10,000 Units (0.0001 GAS)
-        # Example: Input $10,000 -> 100,000,000 integer units (1 GAS)
-        # This makes the demo look more impressive.
-        units_to_move = int(amount_usd * 10_000)
+      # Rule: 1 USD = 10^-8 GAS (which is exactly 1 integer Unit)
+        # Fix: 10,000 USD becomes 10,000 units.
+        units_to_move = int(amount_usd)
         
         # Calculate human-readable value for the Dashboard (e.g. 0.0001 GAS)
         # 1 GAS = 100,000,000 units

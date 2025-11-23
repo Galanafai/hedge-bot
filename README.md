@@ -47,6 +47,11 @@ sudo docker restart spoon-agent-v2 && \
 sudo docker exec -d spoon-agent-v2 python3 /app/alice-hedgebot/agents/agent_oracle.py && \
 sudo docker exec -d spoon-agent-v2 python3 /app/alice-hedgebot/agents/agentb.py
 
+#if you cant stop the container on Ubuntu 20.04: 
+sudo aa-remove-unknown
+###
+
+
 ### Test the Agents
 
 ```bash
@@ -60,7 +65,12 @@ curl -X POST http://localhost:8001/market-risk \
 
 # Example response:
 # {"timestamp":"2025-11-22T15:00:00Z","asset":"neo","current_price":4.13,"risk_level":"LOW","recommendation":"HOLD"}
+
+#run http server
+python3 -m http.server 3000   # from ~/hedge-bot
+
 ```
+
 
 ## 📦 What's in the Container
 
