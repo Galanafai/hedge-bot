@@ -12,6 +12,7 @@ class MarketRiskReport(BaseModel):
     current_price: float
     risk_level: str  # "LOW", "MEDIUM", "CRITICAL"
     recommendation: str # "HOLD" or "HEDGE_NOW"
+    volatility: float # Volatility percentage
 
 # --- 2. Define the Tool (The Logic) ---
 # This is the specific skill Agent A possesses.
@@ -78,14 +79,15 @@ def fetch_market_risk(asset_symbol: str = "neo", force_trigger: bool = False) ->
             asset=asset_symbol,
             current_price=price,
             risk_level=risk,
-            recommendation=rec
+            recommendation=rec,
+            volatility=volatility_pct
         )
 
     except Exception as e:
         print(f"Error fetching data: {e}")
         return MarketRiskReport(
             timestamp="", asset=asset_symbol, current_price=0.0, 
-            risk_level="ERROR", recommendation="HOLD"
+            risk_level="ERROR", recommendation="HOLD", volatility=0.0
         )
 
 
