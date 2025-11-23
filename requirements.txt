@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+neo-mamba>=2.0.0
+python-dotenv
+requests
+pydantic
+# neo3-python  <-- REMOVED (Deprecated/Incompatible)

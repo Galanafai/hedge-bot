@@ -161,4 +161,4 @@ async def check_market_risk(request: Request):
 # To run the agent and expose the API:
 if __name__ == "__main__":
     # Start the HTTP server so n8n can call it
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)
