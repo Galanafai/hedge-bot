@@ -2,6 +2,14 @@
 
 Multi-agent autonomous hedging system built on Neo N3 blockchain with Docker containerization.
 
+> [!NOTE]
+> This README was updated after the hackathon deadline to improve visibility and documentation. The core logic remains unchanged.
+
+## 📺 Demo & Resources
+
+- **YouTube Demo**: [Watch the Video](https://youtu.be/mKL11xYBUJY)
+- **Notion Project Page**: [Alice Hedgebot - The Autonomous CFO](https://www.notion.so/Alice-Hedgebot-The-Autonomous-CFO-2b44a45deedf804c8574cefa4c114dc6?showMoveTo=true&saveParent=true)
+
 ## 🏗️ Architecture
 
 The system consists of two autonomous agents running in a containerized environment:
@@ -24,6 +32,7 @@ The system consists of two autonomous agents running in a containerized environm
 ### Prerequisites
 - Docker installed and running
 - Ubuntu 20.04+ (or any Linux with Docker support)
+- macOS Big Sur (or newer)
 
 ### Setup & Run
 
@@ -125,6 +134,9 @@ Create a `.env` file (gitignored) with your Neo wallet credentials:
 ```env
 NEO_WALLET_PRIVATE_KEY=your_wif_here
 ```
+
+> [!IMPORTANT]
+> Currently, `agentb.py` contains a hardcoded default wallet key for demonstration purposes. In a future production release, this will be fully replaced by the environment variable configuration to ensure security.
 
 ## 📚 API Documentation
 
