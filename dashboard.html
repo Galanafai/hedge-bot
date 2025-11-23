@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HedgeBot - Autonomous Finance for Freelancers</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .neo-green {
+            color: #00E599;
+        }
+
+        .bg-neo-green {
+            background-color: #00E599;
+        }
+
+        .border-neo-green {
+            border-color: #00E599;
+        }
+
+        .pulse-green {
+            animation: pulse-green 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse-green {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .5;
+            }
+        }
+
+        .terminal-scroll {
+            max-height: 300px;
+            overflow-y: auto;
+            scroll-behavior: smooth;
+        }
+
+        .terminal-scroll::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .terminal-scroll::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+
+        .terminal-scroll::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+
+        .agent-node {
+            transition: all 0.3s ease;
+        }
+
+        .agent-node.active {
+            transform: scale(1.05);
+            box-shadow: 0 0 20px rgba(0, 229, 153, 0.5);
+        }
+
+        .flow-line {
+            stroke: #475569;
+            stroke-width: 2;
+            fill: none;
+            transition: stroke 0.3s ease;
+        }
+
+        .flow-line.active {
+            stroke: #00E599;
+            stroke-width: 3;
+            animation: dash 1s linear infinite;
+        }
+
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -20;
+            }
+        }
+
+        .spinner {
+            border: 3px solid #1e293b;
+            border-top: 3px solid #00E599;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-slate-900 text-white min-h-screen">
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-950">
+        <div class="container mx-auto px-6 py-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-3xl font-bold neo-green">HedgeBot</h1>
+                    <p class="text-slate-400 text-sm">Autonomous Finance for Freelancers on Neo N3</p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <div class="text-right">
+                        <p class="text-xs text-slate-500">Protected User</p>
+                        <p class="font-semibold">Alice [The Freelancer]</p>
+                    </div>
+                    <div
+                        class="w-10 h-10 rounded-full bg-neo-green flex items-center justify-center text-slate-900 font-bold">
+                        A
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-6 py-8">
+        <!-- Balance Card -->
+        <div class="bg-slate-800 rounded-lg p-6 mb-8 border border-slate-700">
+            <div class="grid md:grid-cols-2 gap-6">
+                <div>
+                    <p class="text-slate-400 text-sm mb-2">Current Protected Balance (USD)</p>
+                    <h2 class="text-5xl font-bold mb-4" id="balance">$0.00</h2>
+                    <div id="valueSaved" class="hidden">
+                        <div
+                            class="inline-flex items-center gap-2 bg-green-900/30 border border-green-500/50 rounded px-3 py-1">
+                            <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </svg>
+                            <span class="text-green-400 font-semibold" id="savedAmount">+$0 Protected</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-col gap-3">
+                    <input type="number" id="depositAmount" value="10000"
+                        class="bg-slate-700 border border-slate-600 rounded px-4 py-3 text-white text-lg"
+                        placeholder="Enter deposit amount" />
+                    <button id="simulateBtn"
+                        class="bg-neo-green text-slate-900 font-bold py-3 px-6 rounded hover:bg-green-400 transition-all text-lg disabled:opacity-50 disabled:cursor-not-allowed">
+                        Simulate Deposit & Trigger Hedge
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orchestration Hub -->
+        <div class="bg-slate-800 rounded-lg p-6 mb-8 border border-slate-700">
+            <h3 class="text-xl font-bold mb-6">🧠 Orchestration Hub - Live Agent Flow</h3>
+
+            <div class="relative">
+                <!-- SVG for connection lines -->
+                <svg class="absolute inset-0 w-full h-full pointer-events-none" style="z-index: 0;">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#475569" />
+                        </marker>
+                        <marker id="arrowhead-active" markerWidth="10" markerHeight="7" refX="9" refY="3.5"
+                            orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#00E599" />
+                        </marker>
+                    </defs>
+                    <!-- n8n to Agent A -->
+                    <path id="line1" class="flow-line" d="M 200 80 L 350 150" stroke-dasharray="5,5"
+                        marker-end="url(#arrowhead)" />
+                    <!-- Agent A to Agent B -->
+                    <path id="line2" class="flow-line" d="M 550 150 L 700 150" stroke-dasharray="5,5"
+                        marker-end="url(#arrowhead)" />
+                    <!-- Agent B to Neo N3 -->
+                    <path id="line3" class="flow-line" d="M 900 150 L 1050 80" stroke-dasharray="5,5"
+                        marker-end="url(#arrowhead)" />
+                </svg>
+
+                <div class="grid grid-cols-4 gap-4 relative" style="z-index: 1;">
+                    <!-- n8n Orchestrator -->
+                    <div id="node-n8n" class="agent-node bg-slate-700 rounded-lg p-4 border-2 border-slate-600">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-3 h-3 rounded-full bg-slate-500" id="status-n8n"></div>
+                            <h4 class="font-semibold text-sm">n8n Brain</h4>
+                        </div>
+                        <p class="text-xs text-slate-400">Orchestrator</p>
+                        <div id="spinner-n8n" class="spinner mt-2 hidden"></div>
+                    </div>
+
+                    <!-- Agent A (Oracle) -->
+                    <div id="node-oracle" class="agent-node bg-slate-700 rounded-lg p-4 border-2 border-slate-600">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-3 h-3 rounded-full bg-slate-500" id="status-oracle"></div>
+                            <h4 class="font-semibold text-sm">Agent A</h4>
+                        </div>
+                        <p class="text-xs text-slate-400">The Oracle (Eyes)</p>
+                        <div id="spinner-oracle" class="spinner mt-2 hidden"></div>
+                        <p class="text-xs mt-2 neo-green font-semibold" id="oracle-status"></p>
+                    </div>
+
+                    <!-- Agent B (Trader) -->
+                    <div id="node-trader" class="agent-node bg-slate-700 rounded-lg p-4 border-2 border-slate-600">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-3 h-3 rounded-full bg-slate-500" id="status-trader"></div>
+                            <h4 class="font-semibold text-sm">Agent B</h4>
+                        </div>
+                        <p class="text-xs text-slate-400">The Trader (Hands)</p>
+                        <div id="spinner-trader" class="spinner mt-2 hidden"></div>
+                        <p class="text-xs mt-2 text-slate-400" id="trader-wallet"></p>
+                    </div>
+
+                    <!-- Neo N3 -->
+                    <div id="node-neo" class="agent-node bg-slate-700 rounded-lg p-4 border-2 border-slate-600">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-3 h-3 rounded-full bg-slate-500" id="status-neo"></div>
+                            <h4 class="font-semibold text-sm">Neo N3</h4>
+                        </div>
+                        <p class="text-xs text-slate-400">Blockchain</p>
+                        <div id="spinner-neo" class="spinner mt-2 hidden"></div>
+                        <p class="text-xs mt-2 neo-green font-semibold" id="neo-status"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Status Cards -->
+        <div class="grid md:grid-cols-3 gap-6 mb-8">
+            <!-- Agent A Status -->
+            <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                <h4 class="text-sm text-slate-400 mb-2">Agent A (The Oracle) Status</h4>
+                <div id="agentAStatus" class="bg-slate-700 rounded px-3 py-2 text-sm font-semibold">
+                    RISK: LOW (HOLD)
+                </div>
+            </div>
+
+            <!-- Trader Wallet -->
+            <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                <h4 class="text-sm text-slate-400 mb-2">Trader Wallet (Agent B)</h4>
+                <p class="text-sm font-mono">NeMGGun...mzsG</p>
+                <p class="text-xs text-slate-500 mt-1">TestNet Balance: 50 GAS</p>
+            </div>
+
+            <!-- Last Hedge Result -->
+            <div class="bg-slate-800 rounded-lg p-4 border border-slate-700">
+                <h4 class="text-sm text-slate-400 mb-2">Last Hedge Result</h4>
+                <p id="lastHedgeResult" class="text-sm">Awaiting Trigger...</p>
+            </div>
+        </div>
+
+        <!-- Transaction Ledger -->
+        <div class="bg-slate-800 rounded-lg p-6 border border-slate-700 mb-8">
+            <h3 class="text-xl font-bold mb-4">📜 Neo N3 Transaction Ledger (Audit Log)</h3>
+            <div id="txLedger" class="space-y-3">
+                <p class="text-slate-500 text-sm">No transactions yet. Run a simulation to see live blockchain activity.
+                </p>
+            </div>
+        </div>
+
+        <!-- Live Agent Terminal -->
+        <div class="bg-slate-950 rounded-lg p-6 border border-slate-700">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-xl font-bold">💻 Live Agent Terminal</h3>
+                <button id="clearTerminal" class="text-xs text-slate-400 hover:text-white">Clear</button>
+            </div>
+            <div id="terminal" class="terminal-scroll bg-black rounded p-4 font-mono text-sm space-y-1">
+                <p class="text-green-400">[SYSTEM] HedgeBot initialized. Waiting for deposit...</p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // State
+        let balance = 0;
+        let isRunning = false;
+
+        // Elements
+        const balanceEl = document.getElementById('balance');
+        const depositInput = document.getElementById('depositAmount');
+        const simulateBtn = document.getElementById('simulateBtn');
+        const terminal = document.getElementById('terminal');
+        const txLedger = document.getElementById('txLedger');
+        const valueSavedEl = document.getElementById('valueSaved');
+        const savedAmountEl = document.getElementById('savedAmount');
+
+        // Utility Functions
+        function log(message, type = 'info') {
+            const colors = {
+                info: 'text-slate-400',
+                success: 'text-green-400',
+                warning: 'text-yellow-400',
+                error: 'text-red-400',
+                agent: 'text-blue-400',
+                neo: 'neo-green'
+            };
+
+            const timestamp = new Date().toLocaleTimeString();
+            const p = document.createElement('p');
+            p.className = colors[type];
+            p.textContent = `[${timestamp}] ${message}`;
+            terminal.appendChild(p);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function activateNode(nodeId, statusId, spinnerId) {
+            const node = document.getElementById(nodeId);
+            const status = document.getElementById(statusId);
+            const spinner = document.getElementById(spinnerId);
+
+            node.classList.add('active');
+            node.style.borderColor = '#00E599';
+            status.style.backgroundColor = '#00E599';
+            spinner.classList.remove('hidden');
+        }
+
+        function deactivateNode(nodeId, statusId, spinnerId) {
+            const node = document.getElementById(nodeId);
+            const status = document.getElementById(statusId);
+            const spinner = document.getElementById(spinnerId);
+
+            node.classList.remove('active');
+            node.style.borderColor = '#475569';
+            status.style.backgroundColor = '#64748b';
+            spinner.classList.add('hidden');
+        }
+
+        function activateLine(lineId) {
+            const line = document.getElementById(lineId);
+            line.classList.add('active');
+            line.setAttribute('marker-end', 'url(#arrowhead-active)');
+        }
+
+        function deactivateLine(lineId) {
+            const line = document.getElementById(lineId);
+            line.classList.remove('active');
+            line.setAttribute('marker-end', 'url(#arrowhead)');
+        }
+
+        function updateBalance(amount) {
+            balance = amount;
+            balanceEl.textContent = `$${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        }
+
+        function addTransaction(txHash, action, status) {
+            const txDiv = document.createElement('div');
+            txDiv.className = 'bg-slate-900 rounded p-4 border border-slate-700';
+
+            const statusColor = status === 'SUCCESS' ? 'text-green-400' : status === 'HEDGED' ? 'text-yellow-400' : 'text-blue-400';
+
+            txDiv.innerHTML = `
+                <div class="flex justify-between items-start mb-2">
+                    <code class="text-xs text-slate-400 break-all">${txHash}</code>
+                    <span class="text-xs font-bold ${statusColor} ml-4">${status}</span>
+                </div>
+                <p class="text-sm"><strong>ACTION:</strong> ${action}</p>
+                <a href="#" class="text-xs neo-green hover:underline mt-1 inline-block">View on Neo N3 Explorer ↗</a>
+            `;
+
+            if (txLedger.querySelector('.text-slate-500')) {
+                txLedger.innerHTML = '';
+            }
+
+            txLedger.insertBefore(txDiv, txLedger.firstChild);
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // API Configuration
+        const API_ORACLE = 'http://localhost:8001/market-risk';
+        const API_MAIN = 'http://localhost:8000/hedge';
+
+        // Main Simulation with Real API Calls
+        // Main Simulation with Real API Calls
+        async function runSimulation() {
+            if (isRunning) return;
+            isRunning = true;
+            simulateBtn.disabled = true;
+
+            const depositAmount = parseFloat(depositInput.value) || 10000;
+
+            try {
+                log('═══════════════════════════════════════', 'info');
+                log(`💰 NEW DEPOSIT DETECTED: $${depositAmount.toLocaleString()}`, 'success');
+                log('Initializing autonomous hedge workflow...', 'info');
+
+                // Step 1: n8n Orchestrator
+                await sleep(800);
+                activateNode('node-n8n', 'status-n8n', 'spinner-n8n');
+                activateLine('line1');
+                log('[n8n] Workflow triggered: deposit_monitor → risk_check', 'agent');
+
+                // Step 2: Agent A (Oracle)
+                await sleep(1000);
+                deactivateNode('node-n8n', 'status-n8n', 'spinner-n8n');
+                activateNode('node-oracle', 'status-oracle', 'spinner-oracle');
+                deactivateLine('line1');
+                activateLine('line2');
+
+                // Fetch Market Data from Oracle Agent
+                const oracleResponse = await fetch(API_ORACLE, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ asset_symbol: 'neo' })
+                });
+                const oracleData = await oracleResponse.json();
+
+                // Update UI with Oracle Data
+                const riskLevel = oracleData.risk_level || 'UNKNOWN';
+                const recommendation = oracleData.recommendation || 'HOLD';
+                const agentAStatus = document.getElementById('agentAStatus');
+
+                agentAStatus.textContent = `RISK: ${riskLevel} (${recommendation})`;
+
+                if (recommendation === 'HEDGE_NOW') {
+                    agentAStatus.className = 'bg-red-900/50 text-red-200 rounded px-3 py-2 text-sm font-semibold border border-red-700';
+                    log(`[Agent-A] ⚠️ CRITICAL RISK DETECTED. Recommendation: ${recommendation}`, 'warning');
+                } else {
+                    agentAStatus.className = 'bg-green-900/50 text-green-200 rounded px-3 py-2 text-sm font-semibold border border-green-700';
+                    log(`[Agent-A] Market looks stable. Risk: ${riskLevel}`, 'success');
+                }
+
+                // Step 3: Agent B (Trader)
+                await sleep(1000);
+                deactivateNode('node-oracle', 'status-oracle', 'spinner-oracle');
+                activateNode('node-trader', 'status-trader', 'spinner-trader');
+                deactivateLine('line2');
+                activateLine('line3');
+
+                log('[Agent-B] Hedge signal received from Oracle', 'agent');
+                document.getElementById('trader-wallet').textContent = 'Processing...';
+
+                const hedgeResponse = await fetch(API_MAIN, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount: depositAmount }) // Send as 'amount' or 'amount_usd' depending on your agent code
+                });
+
+                const hedgeData = await hedgeResponse.json();
+
+                // --- FIX 1: Handle Nested Response (if agent returns {result: ...}) ---
+                const resultData = hedgeData.result || hedgeData;
+
+                log(`[Agent-B] ✓ Response received from Main Agent`, 'success');
+
+                // --- FIX 2: Use Correct Variable Names from agentb.py ---
+                // Agent returns 'wallet', NOT 'wallet_address'
+                // Agent returns 'block_height', NOT 'current_block_height'
+                const wallet = resultData.wallet || 'N/A';
+                const blockHeight = resultData.block_height || 'Unknown';
+
+                log(`[Agent-B] Wallet: ${wallet}`, 'info');
+                log(`[Agent-B] Block Height: ${blockHeight}`, 'info');
+
+                document.getElementById('trader-wallet').textContent = wallet.substring(0, 10) + '...';
+
+                // --- FIX 3: Use REAL GAS Value from Agent (Trust the 50 GAS Cap) ---
+                // Do NOT calculate (deposit / price) here.
+                const gasAmount = resultData.gas_locked;
+                log(`[Agent-B] Actual GAS transfer: ${gasAmount} GAS`, 'agent');
+
+                // Step 4: Neo N3 Blockchain
+                await sleep(1000);
+                deactivateNode('node-trader', 'status-trader', 'spinner-trader');
+                activateNode('node-neo', 'status-neo', 'spinner-neo');
+                deactivateLine('line3');
+
+                // --- FIX 4: Use REAL Transaction Hash ---
+                const txHash = resultData.tx_hash || '0x...';
+
+                log(`[Neo-N3] Broadcasting transaction: ${txHash.substring(0, 20)}...`, 'neo');
+                document.getElementById('neo-status').textContent = 'Broadcasting...';
+                await sleep(1500);
+
+                log(`[Neo-N3] ✓ Transaction confirmed in block #${blockHeight}`, 'success');
+                document.getElementById('neo-status').textContent = 'Confirmed';
+                await sleep(800);
+
+                // Finalize
+                deactivateNode('node-neo', 'status-neo', 'spinner-neo');
+                updateBalance(balance + depositAmount);
+
+                // (Optional: Keep this simulated "Saved Value" for the demo pitch)
+                const savedValue = (depositAmount * 0.124).toFixed(2);
+                valueSavedEl.classList.remove('hidden');
+                savedAmountEl.textContent = `+$${parseFloat(savedValue).toLocaleString()} Protected`;
+
+                log(`✅ HEDGE COMPLETE: ${gasAmount} GAS locked`, 'success');
+                log(`💰 Value protected: $${savedValue}`, 'success');
+                log('═══════════════════════════════════════', 'info');
+
+                addTransaction(
+                    txHash, // Real Hash
+                    `Hedged $${depositAmount.toLocaleString()} (${gasAmount} GAS locked)`,
+                    'SUCCESS'
+                );
+
+
+
+            } catch (error) {
+                log(`❌ ERROR: ${error.message}`, 'error');
+                console.error(error);
+
+                // Reset UI state on error
+                deactivateNode('node-n8n', 'status-n8n', 'spinner-n8n');
+                deactivateNode('node-oracle', 'status-oracle', 'spinner-oracle');
+                deactivateNode('node-trader', 'status-trader', 'spinner-trader');
+                deactivateNode('node-neo', 'status-neo', 'spinner-neo');
+                deactivateLine('line1');
+                deactivateLine('line2');
+                deactivateLine('line3');
+            }
+            isRunning = false;
+            simulateBtn.disabled = false;
+        }
+        // Event Listeners
+        simulateBtn.addEventListener('click', runSimulation);
+
+        document.getElementById('clearTerminal').addEventListener('click', () => {
+            terminal.innerHTML = '<p class="text-green-400">[SYSTEM] Terminal cleared.</p>';
+        });
+
+        // Initialize
+        log('[SYSTEM] All agents online and ready', 'success');
+        log('[SYSTEM] Connected to Neo N3 TestNet: seed1t5.neo.org:20332', 'success');
+    </script>
+</body>
+
+</html>

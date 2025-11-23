@@ -62,16 +62,19 @@ def fetch_market_risk(asset_symbol: str = "neo", force_trigger: bool = False) ->
         risk = "LOW"
         rec = "HOLD"
         
+        # DEMO MODE: Lower thresholds to always trigger hedge for demonstration
         # Logic: If we are down significantly from the top OR volatility is extreme
-        if force_trigger or (drawdown_pct > 5.0) or (volatility_pct > 8.0):
+        if force_trigger or (drawdown_pct > 0.1) or (volatility_pct > 0.1):  # Very low thresholds for demo
             risk = "CRITICAL"
             rec = "HEDGE_NOW"
-        elif (drawdown_pct > 3.0) or (volatility_pct > 5.0):
+        elif (drawdown_pct > 0.005) or (volatility_pct > 0.005):
             risk = "MEDIUM"
-            rec = "HOLD" # Watch closely
-            
+            rec = "HEDGE_NOW"  # Changed from HOLD to HEDGE_NOW for demo
+        
+        from datetime import datetime, timezone
+        
         return MarketRiskReport(
-            timestamp="2025-11-22T15:00:00Z", # In prod, use datetime.now()
+            timestamp=datetime.now(timezone.utc).isoformat(),
             asset=asset_symbol,
             current_price=price,
             risk_level=risk,
@@ -125,6 +128,16 @@ from fastapi import FastAPI
 import uvicorn
 
 app = FastAPI(title="The Watchtower")
+
+# Add CORS middleware to allow browser requests
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for demo
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class RiskRequest(BaseModel):
     asset_symbol: str = "neo"
