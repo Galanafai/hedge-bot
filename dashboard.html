@@ -391,6 +391,7 @@
             simulateBtn.disabled = true;
 
             const depositAmount = parseFloat(depositInput.value) || 10000;
+            let currentVolatility = 0;
 
             try {
                 log('═══════════════════════════════════════', 'info');
@@ -421,6 +422,7 @@
                 // Update UI with Oracle Data
                 const riskLevel = oracleData.risk_level || 'UNKNOWN';
                 const recommendation = oracleData.recommendation || 'HOLD';
+                currentVolatility = oracleData.volatility || 0;
                 const agentAStatus = document.getElementById('agentAStatus');
 
                 agentAStatus.textContent = `RISK: ${riskLevel} (${recommendation})`;
@@ -494,7 +496,7 @@
                 updateBalance(balance + depositAmount);
 
                 // (Optional: Keep this simulated "Saved Value" for the demo pitch)
-                const savedValue = (depositAmount * 0.124).toFixed(2);
+                const savedValue = (depositAmount * (currentVolatility / 100)).toFixed(2);
                 valueSavedEl.classList.remove('hidden');
                 savedAmountEl.textContent = `+$${parseFloat(savedValue).toLocaleString()} Protected`;
 
