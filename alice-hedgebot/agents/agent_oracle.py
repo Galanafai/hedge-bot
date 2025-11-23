@@ -120,8 +120,45 @@ class OracleAgent(ToolCallAgent):
     available_tools: ToolManager = Field(
         default_factory=lambda: ToolManager([MarketRiskTool()])
     )
+    
+from fastapi import FastAPI
+import uvicorn
 
-# For testing directly via CLI
+app = FastAPI(title="The Watchtower")
+
+class RiskRequest(BaseModel):
+    asset_symbol: str = "neo"
+
+from fastapi import Request
+
+@app.post("/market-risk")
+async def check_market_risk(request: Request):
+    """Expose the market risk tool via HTTP"""
+    try:
+        symbol = "neo" # Default
+        
+        # 1. Try to get JSON body
+        try:
+            body = await request.json()
+            print(f"\n🔍 DEBUG: Received Request Body: {body}")
+            if body and "asset_symbol" in body:
+                symbol = body["asset_symbol"]
+        except Exception:
+            pass
+            
+        # 2. If not in body, check query params
+        if symbol == "neo" and request.query_params.get("asset_symbol"):
+            print(f"\n🔍 DEBUG: Received Query Params: {request.query_params}")
+            symbol = request.query_params["asset_symbol"]
+
+        print(f"✅ Processing request for: {symbol}")
+        return fetch_market_risk(symbol)
+
+    except Exception as e:
+        print(f"❌ Error parsing request: {e}")
+        return {"error": str(e)}
+
+# To run the agent and expose the API:
 if __name__ == "__main__":
-    report = fetch_market_risk("neo")
-    print(f"\n📋 REPORT GENERATED:\n{report.model_dump_json(indent=2)}")
+    # Start the HTTP server so n8n can call it
+    uvicorn.run(app, host="0.0.0.0", port=8000)
