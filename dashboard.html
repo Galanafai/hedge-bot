@@ -446,7 +446,7 @@
                 const hedgeResponse = await fetch(API_MAIN, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ amount: depositAmount }) // Send as 'amount' or 'amount_usd' depending on your agent code
+                    body: JSON.stringify({ amount_usd: depositAmount }) // Send as 'amount' or 'amount_usd' depending on your agent code
                 });
 
                 const hedgeData = await hedgeResponse.json();
@@ -469,7 +469,7 @@
 
                 // --- FIX 3: Use REAL GAS Value from Agent (Trust the 50 GAS Cap) ---
                 // Do NOT calculate (deposit / price) here.
-                const gasAmount = resultData.gas_locked;
+                const gasAmount = parseFloat(resultData.gas_locked).toFixed(8).replace(/\.?0+$/, "");
                 log(`[Agent-B] Actual GAS transfer: ${gasAmount} GAS`, 'agent');
 
                 // Step 4: Neo N3 Blockchain

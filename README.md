@@ -43,12 +43,9 @@ sudo docker run -d \
   --name spoon-agent-v2 \
   spoon-agent-v2
 
-# 4. Start the main agent (port 8000)
-sudo docker exec -d spoon-agent-v2 python3 /app/agent.py
-
-# 5. Start the oracle agent (port 8001)
-sudo docker exec -d spoon-agent-v2 python3 /app/alice-hedgebot/agents/agent_oracle.py
-```
+sudo docker restart spoon-agent-v2 && \
+sudo docker exec -d spoon-agent-v2 python3 /app/alice-hedgebot/agents/agent_oracle.py && \
+sudo docker exec -d spoon-agent-v2 python3 /app/alice-hedgebot/agents/agentb.py
 
 ### Test the Agents
 

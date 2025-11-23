@@ -39,11 +39,10 @@ class HedgeTool(BaseTool):
 
         print(f"🤖 AGENT WAKING UP: Initiating Hedge for ${amount_usd}...")
 
-        # --- THE HACKATHON MATH (DO NOT CHANGE) ---
-        # Rule: 1 USD = 1 Unit (0.00000001 GAS)
-        # Example: Input $10,000 -> 10,000 integer units (Satoshis)
-        # This allows 'Micro-Hedging' without draining the wallet.
-        units_to_move = int(amount_usd)
+        # Rule: 1 USD = 10,000 Units (0.0001 GAS)
+        # Example: Input $10,000 -> 100,000,000 integer units (1 GAS)
+        # This makes the demo look more impressive.
+        units_to_move = int(amount_usd * 10_000)
         
         # Calculate human-readable value for the Dashboard (e.g. 0.0001 GAS)
         # 1 GAS = 100,000,000 units
