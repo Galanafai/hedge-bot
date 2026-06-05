@@ -1,25 +1,25 @@
 """
 task.py – pick-and-stack state machine.
 
-Strategy: build the stack at a fixed central XY in the arm's dexterous region.
-  Cycle 1: pick bottom  → place at STACK_CENTER on table
-  Cycle 2: pick middle  → place on bottom  (stack grows)
-  Cycle 3: pick top     → place on middle  (stack grows)
+Strategy:
+1. perceive initial blocks
+2. anchor bottom
+3. pick middle
+4. place middle with two-phase descent
+5. clear camera and re-perceive support
+6. pick top
+7. place top with two-phase descent
+8. clear camera and verify
 
 Invariants
 ----------
 1. Convergence is a gate. No phase runs after a non-convergent prerequisite.
 2. reset_to_neutral() is called after any non-convergent move and as a via-point.
 3. Grasp is verified after a short lift off the surface, not immediately after close.
+4. Two-phase descent uses kinematic stall detection because force/torque is not exposed.
+5. A tiny micro-lift release avoids gripper pad scraping.
 
-Preserved from previous pass
------------------------------
-- Honest verification tolerances (xy ≤ 30 mm, z-sep in [25, 90] mm).
-- Localize once at start; re-perceive only cubes that have moved.
-- Grasp XY from centroid_world; deterministic base_to_eef place height.
-- Clearance-aware yaw; nudge only when every candidate is blocked.
-
-No ground-truth reads. No import from diagnostics.
+No ground-truth reads.
 """
 from __future__ import annotations
 
@@ -35,29 +35,20 @@ from motion_planning.solution.control import (
     GRIPPER_OPEN, GRIPPER_CLOSE,
 )
 from motion_planning.solution.geometry import top_down_quat
-from motion_planning.solution.grasp_planner import (
-    select_grasp_yaw, most_blocking_obstacle,
-)
+from motion_planning.solution.grasp_planner import select_grasp_yaw
 from motion_planning.solution.verify import (
     grasped, placed_stable, stack_success,
 )
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-# Central dexterous XY: arm is strong here; all cubes end up at this location.
-STACK_CENTER_XY   = np.array([0.05, -0.05])   # world (x, y) of stack base
+# ── Configuration ─────────────────────────────────────────────────────────────
+DEBUG = False  # Set to True to show detailed geometric trace logs
 
+# ── Constants ─────────────────────────────────────────────────────────────────
 APPROACH_HEIGHT   = 0.16    # m above cube top_surface_z for approach
 LIFT_HEIGHT       = 1.020   # absolute world z for transit
 VERIFY_LIFT       = 0.060   # m to lift after close before testing finger sep
-GRASP_Z_ABOVE_TOP = 0.010   # EEF z above cube top_surface_z at grasp (validated)
-PLACE_EPS         = 0.003   # extra over-travel at place so cube contacts support
-
-NUDGE_DISTANCE    = 0.06
-MAX_NUDGE_TRIES   = 1
-MAX_ATTEMPT       = 2       # total attempts per cycle (1 primary + 1 recovery)
 
 HORIZON           = 1000
-BUDGET_PER_CYCLE  = 200     # abort if fewer than this many steps remain
 
 TOL_NEUTRAL  = 0.030   # loose: reset_to_neutral need not fully converge
 TOL_APPROACH = 0.018   # approach via-point
@@ -71,13 +62,6 @@ _QUAT_DOWN = top_down_quat(0.0)
 
 def _log(tag: str, msg: str) -> None:
     print(f"  [{tag}] {msg}", file=sys.stdout)
-
-
-def _steps_remaining(sim) -> int:
-    try:
-        return HORIZON - int(sim.env.timestep)
-    except Exception:
-        return HORIZON
 
 
 def _tdq(yaw: float) -> np.ndarray:
@@ -123,7 +107,7 @@ def _settle_and_perceive(sim, colors: list[str], steps: int = 8,
     for c in colors:
         if c in blocks:
             b = blocks[c]
-            _log("PERCV", f"{c}: fp=({b.centroid_world[0]:.3f},"
+            _log("PERCV", f"{c}: centroid=({b.centroid_world[0]:.3f},"
                  f"{b.centroid_world[1]:.3f}) "
                  f"top_z={b.top_surface_z:.3f} h={b.height:.3f} conf={b.confidence:.2f}")
         else:
@@ -138,10 +122,16 @@ def reset_to_neutral(sim, render: bool = False) -> None:
     neutral = np.array([-0.3, 0.3, LIFT_HEIGHT])
     move_to_pose(sim, neutral, _QUAT_DOWN,
                  pos_tol=TOL_NEUTRAL, ori_tol=0.60,
-                 max_steps=15, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=1.0)
+                 max_steps=15, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=1.0,
+                 desc="Reset Robot Pose to Home")
 
 def clear_camera(sim, render: bool = False) -> None:
-    """Move to a camera-clear pose that does not need to be perfect."""
+    """
+    Move to a camera-clear pose that does not need to be perfect.
+    Before re-perceiving a placed block or verifying the final stack, 
+    the arm moves out of the camera view to avoid occlusion.
+    """
+    _log("CAMERA", "Clearing arm from camera before re-perceiving stack")
     pos = np.array([0.0, 0.22, LIFT_HEIGHT])
     move_to_pose(
         sim,
@@ -153,55 +143,31 @@ def clear_camera(sim, render: bool = False) -> None:
         gripper_cmd=GRIPPER_OPEN,
         max_trans_cmd=1.0,
         render=render,
+        desc="Clear Camera View"
     )
-
-
-# ── Nudge ─────────────────────────────────────────────────────────────────────
-
-def _nudge(sim, neighbor: BlockState, target: BlockState,
-           render: bool = False) -> BlockState | None:
-    _log("NUDGE", f"Nudging {neighbor.color} away from {target.color}")
-    push_dir = neighbor.centroid_world[:2] - target.centroid_world[:2]
-    dist = np.linalg.norm(push_dir)
-    push_dir = push_dir / dist if dist > 1e-4 else np.array([1.0, 0.0])
-
-    above = np.array([neighbor.centroid_world[0], neighbor.centroid_world[1],
-                      neighbor.top_surface_z + APPROACH_HEIGHT])
-    move_to_pose(sim, above, _QUAT_DOWN, pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL,
-                 max_steps=60, gripper_cmd=GRIPPER_CLOSE, render=render)
-
-    mid_z = neighbor.top_surface_z - neighbor.height * 0.5
-    sx = neighbor.centroid_world[0] - push_dir[0] * (neighbor.footprint_radius + 0.02)
-    sy = neighbor.centroid_world[1] - push_dir[1] * (neighbor.footprint_radius + 0.02)
-    move_to_pose(sim, np.array([sx, sy, mid_z]), _QUAT_DOWN,
-                 pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL,
-                 max_steps=50, gripper_cmd=GRIPPER_CLOSE, render=render)
-
-    push_pos = np.array([sx + push_dir[0]*NUDGE_DISTANCE,
-                         sy + push_dir[1]*NUDGE_DISTANCE, mid_z])
-    move_to_pose(sim, push_pos, _QUAT_DOWN, pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL,
-                 max_steps=40, gripper_cmd=GRIPPER_CLOSE, render=render)
-
-    reset_to_neutral(sim, render=render)
-
-    blocks = _settle_and_perceive(sim, [neighbor.color], steps=5, render=render)
-    if neighbor.color in blocks:
-        _cache_update(neighbor.color, blocks[neighbor.color])
-        return blocks[neighbor.color]
-    return None
 
 
 # ── Pick (invariants 1 + 3) ───────────────────────────────────────────────────
 
-def hold_gripper(sim, gripper_cmd, steps=30, render=False):
+def hold_gripper(sim, gripper_cmd, steps=30, render=False, desc=""):
+    """
+    A dedicated gripper hold loop guarantees physics advances while the gripper closes.
+    Do not use `move_to_pose` as a gripper-only close because it exits early once pose tolerance is reached.
+    """
     n = sim.action_spec[0].shape[0]
     action = np.zeros(n)
     action[6] = gripper_cmd
     obs = None
-    for _ in range(steps):
+    if desc:
+        print(f"Executing: Gripper Command -> Target Gripper: {gripper_cmd}")
+    for i in range(steps):
+        if desc and i > 0 and i % 5 == 0:
+            print(f"Holding gripper action for {desc} ({i}/{steps} steps)")
         obs = sim.step(action)
         if render:
             sim.render()
+    if desc:
+        print(f"Gripper action {desc} likely complete after {steps} steps.")
     return obs
 
 def _pick(sim, target: BlockState, obstacles: list[BlockState],
@@ -231,22 +197,26 @@ def _pick(sim, target: BlockState, obstacles: list[BlockState],
             target.top_surface_z + APPROACH_HEIGHT,
         ])
         conv, info = move_to_pose(sim, approach_pos, q, pos_tol=TOL_APPROACH, ori_tol=ORI_TOL,
-                                  max_steps=50, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=1.0)
+                                  max_steps=50, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=1.0,
+                                  desc=f"Move Above Pick Position ({target.color})")
         if not conv and info["pos_err_m"] > 0.040:
             _log("GRASP", f"Approach did not converge ({info['pos_err_m']*1000:.0f}mm) – abort")
             if attempt == 1: return False, {"phase": "approach"}
             continue
 
         # ── Descend to grasp depth ────────────────────────────────────────────────
+        # Grasp height: grasp_z = top_surface_z ensures the gripper closes squarely on the block.
         grasp_z = target.top_surface_z
         grasp_pos = np.array([
             candidate_xy[0],
             candidate_xy[1],
             grasp_z,
         ])
+        _log("PICK", f"Descending to {target.color} top surface")
         TOL_GRASP_FINAL = 0.0025
         conv, info = move_to_pose(sim, grasp_pos, q, pos_tol=TOL_GRASP_FINAL, ori_tol=ORI_TOL,
-                                  max_steps=70, gripper_cmd=GRIPPER_OPEN, render=render)
+                                  max_steps=70, gripper_cmd=GRIPPER_OPEN, render=render,
+                                  desc=f"Move to Pick Position ({target.color})")
 
         obs_descend = hold_gripper(sim, GRIPPER_OPEN, steps=1, render=render)
         actual_eef_pos_at_descend = obs_descend.get("robot0_eef_pos", np.zeros(3)) if obs_descend else np.zeros(3)
@@ -255,21 +225,24 @@ def _pick(sim, target: BlockState, obstacles: list[BlockState],
         xy_err = float(np.linalg.norm(actual_eef_pos_at_descend[:2] - candidate_xy))
         xy_err_mm = xy_err * 1000.0
         
-        _log("GRASP_CENTERING", f"color={target.color} target_xy={candidate_xy[0]:.4f},{candidate_xy[1]:.4f} "
-             f"actual_eef_xy={actual_eef_pos_at_descend[0]:.4f},{actual_eef_pos_at_descend[1]:.4f} xy_error_mm={xy_err_mm:.1f}")
+        if DEBUG:
+            _log("GRASP_CENTERING", f"color={target.color} target_xy={candidate_xy[0]:.4f},{candidate_xy[1]:.4f} "
+                 f"actual_eef_xy={actual_eef_pos_at_descend[0]:.4f},{actual_eef_pos_at_descend[1]:.4f} xy_error_mm={xy_err_mm:.1f}")
              
         if xy_err_mm > 4.0:
             _log("GRASP", f"grasp_centering_failed: error {xy_err_mm:.1f}mm > 4.0mm")
             # abort early to avoid bad grasp
             retreat = grasp_pos.copy(); retreat[2] = LIFT_HEIGHT
-            move_to_pose(sim, retreat, q, pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL, max_steps=40, gripper_cmd=GRIPPER_OPEN, render=render)
+            move_to_pose(sim, retreat, q, pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL, max_steps=40, gripper_cmd=GRIPPER_OPEN, render=render, desc=f"Retreat ({target.color})")
             continue
 
         # ── Gripper Close Hold Loop ──────────────────────────────────────────────
-        obs = hold_gripper(sim, GRIPPER_CLOSE, steps=20, render=render)
+        _log("GRASP", f"Closing gripper on {target.color}")
+        obs = hold_gripper(sim, GRIPPER_CLOSE, steps=20, render=render, desc=f"Close Gripper ({target.color})")
         sep_after_close = float(np.asarray(obs.get("robot0_gripper_qpos", [0, 0])).ravel()[0]
                                 - np.asarray(obs.get("robot0_gripper_qpos", [0, 0])).ravel()[1])
-        _log("GRASP", f"sep_after_close={sep_after_close:.4f}")
+        if DEBUG:
+            _log("GRASP_DEBUG", f"sep_after_close={sep_after_close:.4f}")
         
         eef_z       = float(obs["robot0_eef_pos"][2])
         base_z      = target.top_surface_z - target.height
@@ -279,7 +252,8 @@ def _pick(sim, target: BlockState, obstacles: list[BlockState],
         SMALL_LIFT = 0.020
         verify_pos = np.array([grasp_pos[0], grasp_pos[1], grasp_z + SMALL_LIFT])
         move_to_pose(sim, verify_pos, q, pos_tol=0.015, ori_tol=ORI_TOL,
-                     max_steps=15, gripper_cmd=GRIPPER_CLOSE, render=render)
+                     max_steps=15, gripper_cmd=GRIPPER_CLOSE, render=render,
+                     desc=f"Verify Grasp Lift ({target.color})")
                      
         obs_v = hold_gripper(sim, GRIPPER_CLOSE, steps=1, render=render)
         
@@ -289,7 +263,10 @@ def _pick(sim, target: BlockState, obstacles: list[BlockState],
         sep_v = float(np.asarray(obs_v.get("robot0_gripper_qpos", [0, 0])).ravel()[0]
                       - np.asarray(obs_v.get("robot0_gripper_qpos", [0, 0])).ravel()[1])
         
-        _log("GRASP", f"sep_after_lift={sep_v:.4f} held={held} base_to_eef={base_to_eef:.4f}")
+        if held:
+            _log("GRASP", f"{target.color} held: sep={sep_v:.4f}, base_to_eef={base_to_eef:.4f}")
+        else:
+            _log("GRASP", f"{target.color} failed lift verification")
 
         if not held:
             _log("STACK", f"Grasp failed at lift_verify for {target.color}")
@@ -321,9 +298,12 @@ def _lift_to_transit(sim, yaw: float, render: bool = False) -> tuple[bool, dict]
         return False, {}
     eef = obs_now["robot0_eef_pos"].copy()
     lift_pos = np.array([eef[0], eef[1], LIFT_HEIGHT])
+    _log("CARRY", "Lifting block to transit height")
     _, info = move_to_pose(sim, lift_pos, _tdq(yaw), pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL,
-                           max_steps=150, gripper_cmd=GRIPPER_CLOSE, render=render, max_trans_cmd=0.15)
-    _log("LIFT", f"{info}")
+                           max_steps=150, gripper_cmd=GRIPPER_CLOSE, render=render, max_trans_cmd=0.15,
+                           desc="Move Up to Safe Height Position")
+    if DEBUG:
+        _log("LIFT_DEBUG", f"{info}")
     if info["pos_err_m"] > 0.080:
         _log("LIFT", "Lift did not converge – resetting")
         reset_to_neutral(sim, render=render)
@@ -339,7 +319,8 @@ def _lift_to_transit(sim, yaw: float, render: bool = False) -> tuple[bool, dict]
     from motion_planning.solution.verify import grasped
     sep_after_lift2 = float(np.asarray(obs_lift.get("robot0_gripper_qpos", [0, 0])).ravel()[0]
                             - np.asarray(obs_lift.get("robot0_gripper_qpos", [0, 0])).ravel()[1])
-    _log("LIFT", f"sep_after_lift_to_transit={sep_after_lift2:.4f}")
+    if DEBUG:
+        _log("LIFT_DEBUG", f"sep_after_lift_to_transit={sep_after_lift2:.4f}")
     if not grasped(obs_lift):
         _log("LIFT", "Dropped during _lift_to_transit")
         return False, {}
@@ -364,9 +345,13 @@ def _place(sim, target_color: str, pick_info: dict, support_xy: np.ndarray, supp
     carry_dist = np.linalg.norm(place_pos[:2] - start_pos[:2]) * 1000.0
 
     above_place = place_pos.copy(); above_place[2] = LIFT_HEIGHT
+    
+    _log("PLACE", f"Placing {target_color} at support xy=({support_xy[0]:.4f}, {support_xy[1]:.4f})")
     conv, info = move_to_pose(sim, above_place, q, pos_tol=TOL_TRANSIT, ori_tol=ORI_TOL,
-                              max_steps=120, gripper_cmd=GRIPPER_CLOSE, render=render, max_trans_cmd=0.35)
-    _log("PLACE", f"Above stack: {info}")
+                              max_steps=120, gripper_cmd=GRIPPER_CLOSE, render=render, max_trans_cmd=0.35,
+                              desc=f"Move Above Place Position ({target_color})")
+    if DEBUG:
+        _log("PLACE_DEBUG", f"Above stack: {info}")
     
     # Check if dropped during transit
     n = sim.action_spec[0].shape[0]
@@ -380,24 +365,25 @@ def _place(sim, target_color: str, pick_info: dict, support_xy: np.ndarray, supp
                               - np.asarray(obs_transit.get("robot0_gripper_qpos", [0, 0])).ravel()[1])
     from motion_planning.solution.verify import grasped
     held = grasped(obs_transit)
-    _log("PLACE", f"sep_after_transit={sep_after_transit:.4f} held={held}")
     
-    transit_log = (
-        f"\n[TRANSIT]\n"
-        f"color={target_color}\n"
-        f"sep_before_transit={pick_info.get('sep_after_lift', 0.0):.4f}\n"
-        f"carry_distance_mm={carry_dist:.1f}\n"
-        f"max_trans_cmd=0.25\n"
-        f"sep_after_lift_to_transit={pick_info.get('sep_after_lift_to_transit', 0.0):.4f}\n"
-        f"sep_after_above_stack={sep_after_transit:.4f}\n"
-    )
-    print(transit_log)
+    if DEBUG:
+        _log("PLACE_DEBUG", f"sep_after_transit={sep_after_transit:.4f} held={held}")
+        transit_log = (
+            f"\n[TRANSIT]\n"
+            f"color={target_color}\n"
+            f"sep_before_transit={pick_info.get('sep_after_lift', 0.0):.4f}\n"
+            f"carry_distance_mm={carry_dist:.1f}\n"
+            f"max_trans_cmd=0.25\n"
+            f"sep_after_lift_to_transit={pick_info.get('sep_after_lift_to_transit', 0.0):.4f}\n"
+            f"sep_after_above_stack={sep_after_transit:.4f}\n"
+        )
+        print(transit_log)
 
     if not held:
         _log("PLACE", "dropped_during_transit")
         return False
 
-    if target_color == "green":
+    if DEBUG and target_color == "green":
         print(f"\n[GREEN_PLACE_TRACE]\nphase=before_descent\n"
               f"red_anchor_xy={support_xy[0]:.4f},{support_xy[1]:.4f}\n"
               f"green_pick_xy={pick_info.get('candidate_xy', np.zeros(2))[0]:.4f},{pick_info.get('candidate_xy', np.zeros(2))[1]:.4f}\n"
@@ -407,13 +393,23 @@ def _place(sim, target_color: str, pick_info: dict, support_xy: np.ndarray, supp
               f"place_target_xy={place_pos[0]:.4f},{place_pos[1]:.4f}\n"
               f"place_target_z={place_pos[2]:.4f}")
 
-    # ── Phase 1: Fast approach to near-contact ────────────────────────────────
+    # ── Two-phase descent ─────────────────────────────────────────────────────
+    # 1. Fast approach to near predicted support height.
+    # 2. Slow crawl downward while holding block.
+    # 3. Detect contact from stalled EEF Z progress.
+    # 
+    # Force/torque is not exposed in observations, so contact is inferred from EEF Z progress.
+    # This avoids relying on a fixed mathematical release height because the cube can slip slightly in the gripper.
+    _log("PLACE", "Two-phase descent: approach then slow crawl until contact")
+    
+    # Phase 1: Fast approach to near-contact
     APPROACH_ABOVE_CONTACT = 0.003
     approach_z = contact_eef_z + APPROACH_ABOVE_CONTACT
     approach_pos = np.array([support_xy[0], support_xy[1], approach_z])
     
     move_to_pose(sim, approach_pos, q, pos_tol=0.001, ori_tol=ORI_TOL,
-                 max_steps=70, gripper_cmd=GRIPPER_CLOSE, render=render, max_trans_cmd=0.15)
+                 max_steps=70, gripper_cmd=GRIPPER_CLOSE, render=render, max_trans_cmd=0.15,
+                 desc=f"Move to Near-Contact Place Position ({target_color})")
                  
     # ── Phase 2: Slow constant crawl until stall ──────────────────────────────
     CRAWL_TARGET_BELOW_CONTACT = -0.005
@@ -457,11 +453,12 @@ def _place(sim, target_color: str, pick_info: dict, support_xy: np.ndarray, supp
                 
         last_z = z
 
-    _log("PLACE", f"Descend stop: {stop_reason} in {descend_steps} steps")
+    if DEBUG:
+        _log("PLACE_DEBUG", f"Descend stop: {stop_reason} in {descend_steps} steps")
 
     actual_eef_pos_at_place = obs_place["robot0_eef_pos"].copy() if obs_place else place_pos
 
-    if target_color == "green":
+    if DEBUG and target_color == "green":
         place_xy_err = float(np.linalg.norm(actual_eef_pos_at_place[:2] - place_pos[:2])) * 1000.0
         place_z_err = (actual_eef_pos_at_place[2] - place_pos[2]) * 1000.0
         print(f"\n[GREEN_PLACE_TRACE]\nphase=before_open\n"
@@ -473,41 +470,48 @@ def _place(sim, target_color: str, pick_info: dict, support_xy: np.ndarray, supp
               f"sep_before_open={sep_after_transit:.4f}\n"
               f"stop_reason={stop_reason}")
 
-    # 1. Micro-lift away from block while opening
-    RELEASE_LIFT = 0.0015
-    RELEASE_STEPS = 12
-    RELEASE_TRANS_CMD = 0.05
+    # ── Micro-lift release ────────────────────────────────────────────────────
+    # A tiny upward release while opening prevents gripper-pad scraping from pushing the block sideways.
+    # This approximates compliance/force-release behavior using only pose and gripper commands.
+    _log("RELEASE", "Micro-lift release to avoid gripper scrape")
+    RELEASE_LIFT = 0.0003
+    RELEASE_STEPS = 18
+    RELEASE_TRANS_CMD = 0.015
     release_pos = actual_eef_pos_at_place.copy()
     release_pos[2] += RELEASE_LIFT
     move_to_pose(sim, release_pos, q, pos_tol=0.0015, ori_tol=ORI_TOL,
-                 max_steps=RELEASE_STEPS, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=RELEASE_TRANS_CMD)
+                 max_steps=RELEASE_STEPS, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=RELEASE_TRANS_CMD,
+                 desc=f"Micro-lift Release ({target_color})")
 
     if target_color == "green":
         obs_after_open = hold_gripper(sim, GRIPPER_OPEN, steps=1, render=render)
-        actual_eef_after = obs_after_open["robot0_eef_pos"] if obs_after_open else actual_eef_pos_at_place
-        sep_after = float(np.asarray(obs_after_open.get("robot0_gripper_qpos", [0, 0])).ravel()[0] -
-                          np.asarray(obs_after_open.get("robot0_gripper_qpos", [0, 0])).ravel()[1]) if obs_after_open else 0.0
-        print(f"\n[GREEN_PLACE_TRACE]\nphase=after_open_before_retreat\n"
-              f"actual_eef_pos={actual_eef_after[0]:.4f},{actual_eef_after[1]:.4f},{actual_eef_after[2]:.4f}\n"
-              f"sep_after_open={sep_after:.4f}")
+        if DEBUG:
+            actual_eef_after = obs_after_open["robot0_eef_pos"] if obs_after_open else actual_eef_pos_at_place
+            sep_after = float(np.asarray(obs_after_open.get("robot0_gripper_qpos", [0, 0])).ravel()[0] -
+                              np.asarray(obs_after_open.get("robot0_gripper_qpos", [0, 0])).ravel()[1]) if obs_after_open else 0.0
+            print(f"\n[GREEN_PLACE_TRACE]\nphase=after_open_before_retreat\n"
+                  f"actual_eef_pos={actual_eef_after[0]:.4f},{actual_eef_after[1]:.4f},{actual_eef_after[2]:.4f}\n"
+                  f"sep_after_open={sep_after:.4f}")
 
     # 2. Fast retreat to safe height
     retreat_pos = actual_eef_pos_at_place.copy()
     retreat_pos[2] = LIFT_HEIGHT
     move_to_pose(sim, retreat_pos, q, pos_tol=TOL_TRANSIT, ori_tol=0.60,
-                 max_steps=18, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=1.0)
+                 max_steps=18, gripper_cmd=GRIPPER_OPEN, render=render, max_trans_cmd=1.0,
+                 desc=f"Retreat After Place ({target_color})")
 
-    place_log = (
-        f"\n[PLACE_DEBUG]\n"
-        f"color={target_color}\n"
-        f"support_xy={support_xy[0]:.4f},{support_xy[1]:.4f}\n"
-        f"support_top_z={support_top:.4f}\n"
-        f"base_to_eef={base_to_eef:.4f}\n"
-        f"place_eef_z={eef_z_tgt:.4f}\n"
-        f"actual_eef_pos_at_place={actual_eef_pos_at_place[0]:.4f},{actual_eef_pos_at_place[1]:.4f},{actual_eef_pos_at_place[2]:.4f}\n"
-        f"sep_before_open={sep_after_transit:.4f}\n"
-    )
-    print(place_log)
+    if DEBUG:
+        place_log = (
+            f"\n[PLACE_DEBUG]\n"
+            f"color={target_color}\n"
+            f"support_xy={support_xy[0]:.4f},{support_xy[1]:.4f}\n"
+            f"support_top_z={support_top:.4f}\n"
+            f"base_to_eef={base_to_eef:.4f}\n"
+            f"place_eef_z={eef_z_tgt:.4f}\n"
+            f"actual_eef_pos_at_place={actual_eef_pos_at_place[0]:.4f},{actual_eef_pos_at_place[1]:.4f},{actual_eef_pos_at_place[2]:.4f}\n"
+            f"sep_before_open={sep_after_transit:.4f}\n"
+        )
+        print(place_log)
 
     return True
 
@@ -522,7 +526,9 @@ def run_stack(sim, order: list[str], render: bool = False,
     all_colors = list(order)
 
     _reset_cache()
-    _log("STACK", f"=== Seed {seed}: order {order} ===")
+    _log("PLAN", f"Requested order: bottom={bottom_color}, middle={middle_color}, top={top_color}")
+    if DEBUG:
+        _log("STACK_DEBUG", f"=== Seed {seed}: order {order} ===")
 
     reset_to_neutral(sim, render=render)
 
@@ -538,40 +544,53 @@ def run_stack(sim, order: list[str], render: bool = False,
     middle = blocks[middle_color]
     top = blocks[top_color]
 
-    # Build at the bottom block's actual perceived location.
-    # We use centroid_world here because footprint_centroid includes table reflections for the bottom block.
+    # ── Bottom-anchor strategy ───────────────────────────────────────────────
+    # We leave the requested bottom block in place and build the stack on top of it.
+    # This reduces manipulation from three pick-place cycles to two,
+    # and avoids picking short table-level blocks unnecessarily.
+    
+    # ── Perception choice ────────────────────────────────────────────────────
+    # RGBD segmentation produces block geometry.
+    # centroid_world is used for bottom/table support because table reflections can bias footprint estimates.
+    # footprint_centroid_world is used for stacked support because it empirically gives the best center under this camera geometry.
+    
     support_xy = bottom.centroid_world[:2].copy()
     support_top_z = bottom.top_surface_z
-    print(f"\n[SUPPORT_XY]\n"
-          f"support={bottom_color}\n"
-          f"footprint_xy={bottom.footprint_centroid_world[0]:.4f},{bottom.footprint_centroid_world[1]:.4f}\n"
-          f"centroid_xy={bottom.centroid_world[0]:.4f},{bottom.centroid_world[1]:.4f}\n"
-          f"top_face_xy={bottom.top_face_centroid_world[0]:.4f},{bottom.top_face_centroid_world[1]:.4f}\n"
-          f"chosen_xy={support_xy[0]:.4f},{support_xy[1]:.4f}")
-    _log("STACK", f"Bottom anchored at spawn XY: ({support_xy[0]:.3f}, {support_xy[1]:.3f})")
+    
+    if DEBUG:
+        print(f"\n[SUPPORT_XY]\n"
+              f"support={bottom_color}\n"
+              f"footprint_xy={bottom.footprint_centroid_world[0]:.4f},{bottom.footprint_centroid_world[1]:.4f}\n"
+              f"centroid_xy={bottom.centroid_world[0]:.4f},{bottom.centroid_world[1]:.4f}\n"
+              f"top_face_xy={bottom.top_face_centroid_world[0]:.4f},{bottom.top_face_centroid_world[1]:.4f}\n"
+              f"chosen_xy={support_xy[0]:.4f},{support_xy[1]:.4f}")
+              
+    _log("ANCHOR", f"Using {bottom_color} as fixed bottom support at xy=({support_xy[0]:.3f}, {support_xy[1]:.3f})")
 
     # ── Cycle 2: place middle on bottom ──────────────────────────────────────
+    _log("PICK", f"Moving above {middle_color}")
     ok, pick_info = _pick(sim, middle, obstacles=[top], render=render)
     if not ok:
         phase = pick_info.get("phase", "pick")
-        _log("STACK", f"Grasp failed at {phase} for {middle_color}")
+        _log("PICK", f"Grasp failed at {phase} for {middle_color}")
         
         # DROP_CHECK logic
         reset_to_neutral(sim, render=render)
-        chk = _settle_and_perceive(sim, [middle_color], steps=5, render=render)
-        if middle_color in chk:
-            b = chk[middle_color]
-            d_spawn = np.linalg.norm(b.footprint_centroid_world[:2] - middle.footprint_centroid_world[:2]) * 1000.0
-            d_stack = np.linalg.norm(b.footprint_centroid_world[:2] - support_xy) * 1000.0
-            drop_log = (
-                f"\n[DROP_CHECK]\n"
-                f"color={middle_color}\n"
-                f"perceived_xy={b.footprint_centroid_world[0]:.4f},{b.footprint_centroid_world[1]:.4f}\n"
-                f"perceived_top_z={b.top_surface_z:.4f}\n"
-                f"distance_from_pick_spawn_mm={d_spawn:.1f}\n"
-                f"distance_from_stack_target_mm={d_stack:.1f}\n"
-            )
-            print(drop_log)
+        if DEBUG:
+            chk = _settle_and_perceive(sim, [middle_color], steps=5, render=render)
+            if middle_color in chk:
+                b = chk[middle_color]
+                d_spawn = np.linalg.norm(b.footprint_centroid_world[:2] - middle.footprint_centroid_world[:2]) * 1000.0
+                d_stack = np.linalg.norm(b.footprint_centroid_world[:2] - support_xy) * 1000.0
+                drop_log = (
+                    f"\n[DROP_CHECK]\n"
+                    f"color={middle_color}\n"
+                    f"perceived_xy={b.footprint_centroid_world[0]:.4f},{b.footprint_centroid_world[1]:.4f}\n"
+                    f"perceived_top_z={b.top_surface_z:.4f}\n"
+                    f"distance_from_pick_spawn_mm={d_spawn:.1f}\n"
+                    f"distance_from_stack_target_mm={d_stack:.1f}\n"
+                )
+                print(drop_log)
 
         return False, f"pick_middle_failed:{phase}"
 
@@ -595,9 +614,9 @@ def run_stack(sim, order: list[str], render: bool = False,
         return False, "middle_reperception_failed"
     middle_actual = middle_obs[middle_color]
     _cache_update(middle_color, middle_actual)
-    _log("STACK", f"Middle actual XY: ({middle_actual.footprint_centroid_world[0]:.3f}, {middle_actual.footprint_centroid_world[1]:.3f})")
+    _log("PERCEPTION", f"Re-detected {middle_color} support at xy=({middle_actual.footprint_centroid_world[0]:.3f}, {middle_actual.footprint_centroid_world[1]:.3f})")
 
-    if middle_color == "green":
+    if DEBUG and middle_color == "green":
         b = middle_actual
         r = bottom
         offset = float(np.linalg.norm(b.footprint_centroid_world[:2] - r.footprint_centroid_world[:2]) * 1000.0)
@@ -608,6 +627,7 @@ def run_stack(sim, order: list[str], render: bool = False,
               f"green_top_z={b.top_surface_z:.4f}")
 
     # ── Cycle 3: place top on middle ─────────────────────────────────────────
+    _log("PICK", f"Moving above {top_color}")
     ok, pick_info = _pick(sim, top, obstacles=[], render=render)
     if not ok:
         phase = pick_info.get("phase", "pick")
@@ -620,12 +640,13 @@ def run_stack(sim, order: list[str], render: bool = False,
         return False, "lift_top_failed"
 
     middle_support_xy = middle_actual.footprint_centroid_world[:2].copy()
-    print(f"\n[SUPPORT_XY]\n"
-          f"support={middle_color}\n"
-          f"footprint_xy={middle_actual.footprint_centroid_world[0]:.4f},{middle_actual.footprint_centroid_world[1]:.4f}\n"
-          f"centroid_xy={middle_actual.centroid_world[0]:.4f},{middle_actual.centroid_world[1]:.4f}\n"
-          f"top_face_xy={middle_actual.top_face_centroid_world[0]:.4f},{middle_actual.top_face_centroid_world[1]:.4f}\n"
-          f"chosen_xy={middle_support_xy[0]:.4f},{middle_support_xy[1]:.4f}")
+    if DEBUG:
+        print(f"\n[SUPPORT_XY]\n"
+              f"support={middle_color}\n"
+              f"footprint_xy={middle_actual.footprint_centroid_world[0]:.4f},{middle_actual.footprint_centroid_world[1]:.4f}\n"
+              f"centroid_xy={middle_actual.centroid_world[0]:.4f},{middle_actual.centroid_world[1]:.4f}\n"
+              f"top_face_xy={middle_actual.top_face_centroid_world[0]:.4f},{middle_actual.top_face_centroid_world[1]:.4f}\n"
+              f"chosen_xy={middle_support_xy[0]:.4f},{middle_support_xy[1]:.4f}")
 
     if not _place(sim, top_color, pick_info, middle_support_xy, middle_actual.top_surface_z, pick_info["base_to_eef"],
                   grasp_yaw=pick_info.get("yaw", 0.0), render=render):
@@ -636,5 +657,9 @@ def run_stack(sim, order: list[str], render: bool = False,
 
     # ── Verify final stack ───────────────────────────────────────────────────
     success, reason = stack_success(sim, order, render=render)
-    _log("STACK", f"stack_success={success}: {reason}")
+    if success:
+        _log("SUCCESS", f"Stack completed: {' -> '.join(order)}")
+    else:
+        _log("FAILURE", f"stack_success={success}: {reason}")
+        
     return success, reason

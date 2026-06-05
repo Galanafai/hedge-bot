@@ -1,9 +1,10 @@
 """
 verify.py – independent verification predicates.
 
-The actor never certifies its own output.
+This module acts as an independent verifier, completely separate from the 
+task execution and control policy. The actor never certifies its own output.
 Each phase passes an independent predicate before the next runs.
-No ground-truth reads. No import from motion_planning.diagnostics.
+No ground-truth reads.
 """
 from __future__ import annotations
 

@@ -77,6 +77,7 @@ def move_to_pose(
     gripper_cmd: float | None = None,
     render: bool = False,
     max_trans_cmd: float | None = None,
+    desc: str = "",
 ) -> tuple[bool, dict[str, Any]]:
     """Move end-effector to target_pos / target_quat, closed loop.
 
@@ -106,6 +107,16 @@ def move_to_pose(
     pos_err_final   = float("inf")
     ori_err_final   = float("inf")
     steps_taken     = 0
+
+    if desc:
+        # Quick RPY approximation for logging
+        import math
+        x, y, z, w = target_quat
+        roll = math.atan2(2*(w*x + y*z), 1 - 2*(x*x + y*y))
+        pitch = math.asin(np.clip(2*(w*y - z*x), -1.0, 1.0))
+        yaw = math.atan2(2*(w*z + x*y), 1 - 2*(y*y + z*z))
+        
+        print(f"Executing: {desc} -> Target Pos: [{target_pos[0]:.3f} {target_pos[1]:.3f} {target_pos[2]:.3f}], Target RPY: [{roll:.3f} {pitch:.3f} {yaw:.3f}], Gripper: {gripper_cmd}")
 
     for step in range(max_steps):
         eef_pos  = last_obs["robot0_eef_pos"].copy()
@@ -144,6 +155,15 @@ def move_to_pose(
         if render:
             sim.render()
         steps_taken = step + 1
+
+        if desc and steps_taken % 25 == 0:
+            print(f"{desc} - Step {steps_taken}: Dist to Target Pos={pos_err_final:.4f} m")
+
+    if desc:
+        if pos_err_final < pos_tol and ori_err_final < ori_tol:
+            print(f"Reached target pose for {desc} in {steps_taken} steps.")
+        else:
+            print(f"Failed to reach target pose for {desc} in {max_steps} steps.")
 
     info = {
         "steps":         steps_taken,

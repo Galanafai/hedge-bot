@@ -23,42 +23,37 @@ _DEFAULT_ORDER = ["red", "green", "blue"]
 _DEFAULT_SEED  = 0
 
 
-def _parse_order() -> list[str]:
-    """Get stack order from CLI args, or prompt interactively."""
-    args = sys.argv[1:]
-    if len(args) == 3 and all(a in _VALID_COLORS for a in args):
-        return list(args)
-    if args:
-        print(f"Usage: python run_sim.py <color1> <color2> <color3>")
-        print(f"  Colors: red, green, blue (bottom → top)")
-        sys.exit(1)
-    # Interactive prompt
-    print("Pick-and-Stack Demo")
-    print("Enter stack order as: <bottom> <middle> <top>")
-    print(f"  Colors: red, green, blue")
-    print(f"  Default: {' '.join(_DEFAULT_ORDER)}")
-    raw = input("Order [Enter for default]: ").strip()
-    if not raw:
-        return _DEFAULT_ORDER
-    parts = raw.lower().split()
-    if len(parts) == 3 and all(p in _VALID_COLORS for p in parts):
-        return parts
-    print(f"Invalid order '{raw}'. Using default: {_DEFAULT_ORDER}")
-    return _DEFAULT_ORDER
+import argparse
+
+def _parse_args() -> tuple[list[str], int]:
+    """Get stack order and seed from CLI args."""
+    parser = argparse.ArgumentParser(description="Pick-and-Stack Visual Demo")
+    parser.add_argument("order", nargs="*", default=_DEFAULT_ORDER,
+                        help="Stack order (e.g. red green blue)")
+    parser.add_argument("--seed", type=int, default=_DEFAULT_SEED,
+                        help="Random seed for the simulation")
+    
+    args = parser.parse_args()
+    
+    if len(args.order) != 3 or not all(c in _VALID_COLORS for c in args.order):
+        print(f"Invalid order '{args.order}'. Using default: {_DEFAULT_ORDER}")
+        return _DEFAULT_ORDER, args.seed
+        
+    return args.order, args.seed
 
 
 def main() -> None:
-    order = _parse_order()
+    order, seed = _parse_args()
     print(f"\nStack order: {order[0]} (bottom) → {order[1]} (middle) → {order[2]} (top)")
-    print(f"Seed: {_DEFAULT_SEED}")
+    print(f"Seed: {seed}")
     print("Starting simulation with rendering...\n")
 
     sim = Simulator()
-    np.random.seed(_DEFAULT_SEED)
+    np.random.seed(seed)
     sim.reset()
 
     from motion_planning.solution.task import run_stack
-    success, reason = run_stack(sim, order, render=not _HEADLESS, seed=_DEFAULT_SEED)
+    success, reason = run_stack(sim, order, render=not _HEADLESS, seed=seed)
 
     print(f"\n{'═'*50}")
     print(f"  Result: {'SUCCESS ✓' if success else 'FAILURE ✗'}")

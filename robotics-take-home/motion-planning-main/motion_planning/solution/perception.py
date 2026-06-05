@@ -49,9 +49,12 @@ _MIN_MASK_PX = 20
 @dataclass
 class BlockState:
     color:                    str
-    centroid_world:           np.ndarray   # (3,) top-face centroid in world
-    footprint_centroid_world: np.ndarray   # (3,) mean XY of all gated pts – better grasp target
-    top_face_centroid_world:  np.ndarray   # (3,) strictly top 6mm points to avoid side bias
+    # centroid_world is used for the bottom/table support (more stable vs table-level reflections).
+    centroid_world:           np.ndarray   # (3,) Mean of upper 10% points (used for table-level anchors).
+    # footprint_centroid_world is used for stacked supports (best center avoiding perspective bias).
+    footprint_centroid_world: np.ndarray   # (3,) Mean of ALL gated points.
+    # top_face_centroid_world is retained as an alternate/diagnostic geometric estimator.
+    top_face_centroid_world:  np.ndarray   # (3,) Mean of strictly top 6mm points.
     top_surface_z:            float        # world z of top face
     yaw:                      float        # radians, mod pi/2, from mask rectangle
     planar_extent:            tuple[float, float]  # (half-width, half-length) in world m

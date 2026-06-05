@@ -1,6 +1,9 @@
 """
 harness.py – headless multi-seed success-rate harness.
 
+This is a deterministic headless runner that evaluates the exact same 
+`run_stack()` policy used in the visual demo across multiple randomized seeds.
+
 Usage:
     python -m motion_planning.solution.harness --order red green blue --seeds 0 1 2 3 4
 """

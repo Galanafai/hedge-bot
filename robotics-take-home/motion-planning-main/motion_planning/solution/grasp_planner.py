@@ -3,7 +3,6 @@ grasp_planner.py – clearance-aware grasp yaw selection.
 
 For each candidate yaw, models each finger as a slab and checks whether any
 obstacle cube fouls the slab.  Chooses the yaw that maximises minimum clearance.
-If no yaw is clear, falls back to a bounded nudge of the most-blocking neighbor.
 
 Finger geometry (approximate for Panda parallel gripper):
   d        : half open-width from target center (≈ 0.04 m)
@@ -98,34 +97,4 @@ def select_grasp_yaw(
     return float(yaws[best_idx]), float(clearances[best_idx])
 
 
-def verify_corridor(
-    yaw:    float,
-    target: BlockState,
-    obstacles: list[BlockState],
-) -> tuple[bool, float]:
-    """Re-check corridor clearance with freshly perceived positions.
 
-    Returns (clear, clearance_m).
-    """
-    target_xy = target.centroid_world[:2]
-    cl = _finger_clearance(yaw, target_xy, obstacles)
-    return cl >= 0, cl
-
-
-def most_blocking_obstacle(
-    yaw:    float,
-    target: BlockState,
-    obstacles: list[BlockState],
-) -> BlockState | None:
-    """Return the obstacle with the worst (most negative) clearance."""
-    if not obstacles:
-        return None
-    target_xy = target.centroid_world[:2]
-    worst_cl  = float("inf")
-    worst_obs = None
-    for obs in obstacles:
-        cl = _finger_clearance(yaw, target_xy, [obs])
-        if cl < worst_cl:
-            worst_cl  = cl
-            worst_obs = obs
-    return worst_obs
